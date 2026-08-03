@@ -50,11 +50,20 @@ contract VaultRegistry is IVaultRegistry {
     /// @notice Auto-incrementing vault ID counter.
     uint256 public nextVaultId = 1;
 
-    /// @notice Vault ID → Vault data.
+    /// @notice Vault ID -> Vault data.
     mapping(uint256 => Vault) public vaults;
 
     /// @notice The address authorized to submit quorum results (enclave oracle).
     address public enclaveOracle;
+
+    /// @notice The FDC attestation verifier contract (Layer 2).
+    address public fdcVerifier;
+
+    /// @notice Vault ID -> number of verified FDC attestations received.
+    mapping(uint256 => uint256) public vaultAttestationCount;
+
+    /// @notice Default quorum threshold (MVP: 2 attestations).
+    uint256 public quorumThreshold = 2;
 
     // ─── Modifiers ───────────────────────────────────────────────────────
 
@@ -73,6 +82,11 @@ contract VaultRegistry is IVaultRegistry {
         _;
     }
 
+    modifier onlyFdcVerifier() {
+        require(msg.sender == fdcVerifier, "VR: not fdc verifier");
+        _;
+    }
+
     modifier inState(uint256 vaultId, VaultState expected) {
         require(vaults[vaultId].state == expected, "VR: wrong state");
         _;
@@ -84,6 +98,39 @@ contract VaultRegistry is IVaultRegistry {
     constructor(address _enclaveOracle) {
         require(_enclaveOracle != address(0), "VR: zero oracle");
         enclaveOracle = _enclaveOracle;
+    }
+
+    /// @notice Set the FDC attestation verifier address (Layer 2).
+    /// @dev Only callable once (no admin key in MVP).
+    function setFdcVerifier(address _fdcVerifier) external {
+        require(fdcVerifier == address(0), "VR: fdc verifier already set");
+        require(_fdcVerifier != address(0), "VR: zero fdc verifier");
+        fdcVerifier = _fdcVerifier;
+    }
+
+    /// @notice Set quorum threshold.
+    function setQuorumThreshold(uint256 _threshold) external {
+        require(_threshold > 0, "VR: zero threshold");
+        quorumThreshold = _threshold;
+    }
+
+    /// @notice Called by FdcAttestationVerifier when a verified attestation is recorded.
+    /// @dev Increments the attestation count. If quorum is met and vault is in
+    ///      QUORUM_PENDING, auto-transitions to DISPUTE_WINDOW.
+    function submitVerifiedAttestation(uint256 vaultId)
+        external
+        onlyFdcVerifier()
+    {
+        vaultAttestationCount[vaultId]++;
+
+        // Auto-transition if quorum met and vault is waiting for quorum
+        Vault storage v = vaults[vaultId];
+        if (v.state == VaultState.QUORUM_PENDING && vaultAttestationCount[vaultId] >= quorumThreshold) {
+            v.state = VaultState.DISPUTE_WINDOW;
+            v.windowDeadline = block.timestamp + v.disputeWindow;
+            emit StateTransition(vaultId, VaultState.QUORUM_PENDING, VaultState.DISPUTE_WINDOW);
+            emit QuorumResultSubmitted(vaultId, true);
+        }
     }
 
     // ─── Core Entry Points ──────────────────────────────────────────────
