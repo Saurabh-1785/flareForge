@@ -1,0 +1,19 @@
+# Binaries
+bin/
+relayer
+
+# Environment (contains private keys!)
+.env
+
+# Go
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
