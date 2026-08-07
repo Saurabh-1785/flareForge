@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import {
   useAccount,
@@ -118,13 +118,20 @@ export default function VaultDetailPage() {
     refetchTiming();
   }, [refetchState, refetchBalance, refetchTiming]);
 
-  // Refetch after confirmed tx
-  if (confirmed) {
-    setTimeout(() => {
-      refetchAll();
-      resetTx();
-    }, 2000);
-  }
+  // Track which txHash we've already handled for refetch
+  const handledTxRef = useRef<string | null>(null);
+
+  // Refetch after confirmed tx (useEffect prevents re-render loop)
+  useEffect(() => {
+    if (confirmed && txHash && handledTxRef.current !== txHash) {
+      handledTxRef.current = txHash;
+      const timer = setTimeout(() => {
+        refetchAll();
+        resetTx();
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [confirmed, txHash, refetchAll, resetTx]);
 
   // ── Actions ──────────────────────────────────────────────────────
   const doCheckIn = () => {

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { type Abi } from "viem";
 import { explorerTxUrl } from "@/lib/constants";
@@ -41,7 +42,11 @@ export function TransactionButton({
     hash,
   });
 
+  // Track whether onSuccess has already been called for this tx hash
+  const calledRef = useRef<string | null>(null);
+
   const handleClick = () => {
+    calledRef.current = null;
     reset();
     writeContract({
       address: contractAddress,
@@ -51,11 +56,13 @@ export function TransactionButton({
     } as Parameters<typeof writeContract>[0]);
   };
 
-  // Call onSuccess when confirmed
-  if (isConfirmed && hash && onSuccess) {
-    // Use setTimeout to avoid calling during render
-    setTimeout(() => onSuccess(hash), 0);
-  }
+  // Fire onSuccess exactly once per confirmed transaction
+  useEffect(() => {
+    if (isConfirmed && hash && onSuccess && calledRef.current !== hash) {
+      calledRef.current = hash;
+      onSuccess(hash);
+    }
+  }, [isConfirmed, hash, onSuccess]);
 
   const isLoading = isWriting || isConfirming;
   const error = writeError || confirmError;

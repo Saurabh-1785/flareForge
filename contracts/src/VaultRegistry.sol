@@ -56,6 +56,9 @@ contract VaultRegistry is IVaultRegistry {
     /// @notice The address authorized to submit quorum results (enclave oracle).
     address public enclaveOracle;
 
+    /// @notice The deployer / admin address (for admin-only config setters).
+    address public admin;
+
     /// @notice The FDC attestation verifier contract (Layer 2).
     address public fdcVerifier;
 
@@ -64,6 +67,9 @@ contract VaultRegistry is IVaultRegistry {
 
     /// @notice Default quorum threshold (MVP: 2 attestations).
     uint256 public quorumThreshold = 2;
+
+    /// @dev Reentrancy guard flag.
+    bool private _locked;
 
     // ─── Modifiers ───────────────────────────────────────────────────────
 
@@ -87,9 +93,22 @@ contract VaultRegistry is IVaultRegistry {
         _;
     }
 
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "VR: not admin");
+        _;
+    }
+
     modifier inState(uint256 vaultId, VaultState expected) {
         require(vaults[vaultId].state == expected, "VR: wrong state");
         _;
+    }
+
+    /// @dev Reentrancy guard — protects functions that transfer tokens.
+    modifier nonReentrant() {
+        require(!_locked, "VR: reentrant call");
+        _locked = true;
+        _;
+        _locked = false;
     }
 
     // ─── Constructor ─────────────────────────────────────────────────────
@@ -98,18 +117,19 @@ contract VaultRegistry is IVaultRegistry {
     constructor(address _enclaveOracle) {
         require(_enclaveOracle != address(0), "VR: zero oracle");
         enclaveOracle = _enclaveOracle;
+        admin = msg.sender;
     }
 
     /// @notice Set the FDC attestation verifier address (Layer 2).
-    /// @dev Only callable once (no admin key in MVP).
-    function setFdcVerifier(address _fdcVerifier) external {
+    /// @dev Only callable once by admin.
+    function setFdcVerifier(address _fdcVerifier) external onlyAdmin {
         require(fdcVerifier == address(0), "VR: fdc verifier already set");
         require(_fdcVerifier != address(0), "VR: zero fdc verifier");
         fdcVerifier = _fdcVerifier;
     }
 
-    /// @notice Set quorum threshold.
-    function setQuorumThreshold(uint256 _threshold) external {
+    /// @notice Set quorum threshold (admin only).
+    function setQuorumThreshold(uint256 _threshold) external onlyAdmin {
         require(_threshold > 0, "VR: zero threshold");
         quorumThreshold = _threshold;
     }
@@ -278,12 +298,14 @@ contract VaultRegistry is IVaultRegistry {
     /// @inheritdoc IVaultRegistry
     function finalizeDisputeWindow(uint256 vaultId)
         external
+        nonReentrant
         inState(vaultId, VaultState.DISPUTE_WINDOW)
     {
         Vault storage v = vaults[vaultId];
         require(block.timestamp >= v.windowDeadline, "VR: dispute window not elapsed");
 
         // Release tranche 1 (50% for MVP two-step release)
+        // Checks-effects-interactions: update state BEFORE any external calls
         uint256 tranche1Amount = v.balance / 2;
         v.balance -= tranche1Amount;
 
@@ -300,15 +322,17 @@ contract VaultRegistry is IVaultRegistry {
     /// @inheritdoc IVaultRegistry
     function finalizeFinalWindow(uint256 vaultId)
         external
+        nonReentrant
         inState(vaultId, VaultState.FINAL_WINDOW)
     {
         Vault storage v = vaults[vaultId];
         require(block.timestamp >= v.windowDeadline, "VR: final window not elapsed");
 
+        // Checks-effects-interactions: zero balance BEFORE emitting
         uint256 remainingBalance = v.balance;
         v.balance = 0;
-
         v.state = VaultState.FULLY_RELEASED;
+
         emit StateTransition(vaultId, VaultState.FINAL_WINDOW, VaultState.FULLY_RELEASED);
         emit TrancheReleased(vaultId, 2, remainingBalance);
         emit VaultFullyReleased(vaultId);
@@ -317,22 +341,24 @@ contract VaultRegistry is IVaultRegistry {
     /// @inheritdoc IVaultRegistry
     function cancelVault(uint256 vaultId)
         external
+        nonReentrant
         onlyOwner(vaultId)
         inState(vaultId, VaultState.ACTIVE)
     {
         Vault storage v = vaults[vaultId];
 
-        // Return funds to owner
+        // Checks-effects-interactions: update state BEFORE transfer
         uint256 refund = v.balance;
         v.balance = 0;
+        v.state = VaultState.CLOSED;
 
+        emit StateTransition(vaultId, VaultState.ACTIVE, VaultState.CLOSED);
+        emit VaultCancelled(vaultId);
+
+        // External call LAST (CEI pattern)
         if (refund > 0) {
             IERC20(v.fundingAsset).transfer(msg.sender, refund);
         }
-
-        v.state = VaultState.CLOSED;
-        emit StateTransition(vaultId, VaultState.ACTIVE, VaultState.CLOSED);
-        emit VaultCancelled(vaultId);
     }
 
     // ─── View Helpers ────────────────────────────────────────────────────

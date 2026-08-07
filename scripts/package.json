@@ -1,0 +1,17 @@
+{
+  "name": "continuity-vault-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "npx tsx scripts/e2e-lifecycle.ts",
+    "e2e:happy": "npx tsx scripts/e2e-lifecycle.ts --scenario happy",
+    "e2e:halt": "npx tsx scripts/e2e-lifecycle.ts --scenario halt",
+    "e2e:override": "npx tsx scripts/e2e-lifecycle.ts --scenario override",
+    "e2e:cancel": "npx tsx scripts/e2e-lifecycle.ts --scenario cancel",
+    "e2e:all": "npx tsx scripts/e2e-lifecycle.ts --scenario all"
+  },
+  "dependencies": {
+    "viem": "^2.21.0",
+    "tsx": "^4.19.0"
+  }
+}
